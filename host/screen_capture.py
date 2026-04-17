@@ -1,4 +1,5 @@
 import threading
+import time
 import io
 from PIL import Image
 
@@ -7,6 +8,7 @@ try:
     _DXCAM_INSTALLED = True
 except ImportError:
     _DXCAM_INSTALLED = False
+    print("[화면캡처] dxcam 미설치 → mss 사용 (잠금화면 캡처 불가)")
 
 try:
     import mss as _mss_mod
@@ -17,13 +19,12 @@ except ImportError:
 
 class ScreenCapture:
     def __init__(self, quality: int = 80, scale: float = 1.0):
-        self._quality = quality
-        self._scale   = scale
-        self._lock    = threading.Lock()
-
-        self._cam        = None   # dxcam 인스턴스
-        self._use_dxcam  = _DXCAM_INSTALLED  # 런타임 폴백 시 False로 전환
-        self._mss_local  = threading.local()  # mss 폴백용 스레드-로컬
+        self._quality    = quality
+        self._scale      = scale
+        self._lock       = threading.Lock()
+        self._cam        = None
+        self._use_dxcam  = _DXCAM_INSTALLED
+        self._mss_local  = threading.local()
 
     # ── thread-safe 프로퍼티 ──────────────────────────────
 
@@ -50,44 +51,53 @@ class ScreenCapture:
     # ── dxcam 초기화 ─────────────────────────────────────
 
     def _init_dxcam(self):
-        """처음 호출 시 dxcam 시작. 실패하면 mss로 자동 폴백."""
         if self._cam is not None:
             return
         try:
-            cam = dxcam.create(output_color='RGB')
-            # video_mode=True: get_latest_frame()이 항상 프레임 반환 (None 없음)
-            cam.start(target_fps=60, video_mode=True)
-            self._cam = cam
-            print("[화면캡처] dxcam 시작 완료 (잠금화면 캡처 지원)")
+            print("[화면캡처] dxcam 초기화 중...")
+            self._cam = dxcam.create(output_color='RGB')
+            # 첫 프레임 warm-up (grab()이 처음엔 None 반환할 수 있음)
+            for i in range(20):
+                f = self._cam.grab()
+                if f is not None:
+                    print(f"[화면캡처] dxcam 준비 완료 (warm-up {i+1}회)")
+                    return
+                time.sleep(0.05)
+            # warm-up 후에도 None → mss 폴백
+            raise RuntimeError("warm-up 후에도 프레임 없음")
         except Exception as e:
             print(f"[화면캡처] dxcam 초기화 실패: {e}")
-            print("[화면캡처] mss 폴백 모드로 전환 (잠금화면 캡처 불가)")
+            print("[화면캡처] mss 폴백 모드 전환 (잠금화면 캡처 불가)")
+            self._cam = None
             self._use_dxcam = False
-
-    def cleanup(self):
-        if self._cam:
-            try:
-                self._cam.stop()
-            except Exception:
-                pass
 
     # ── 캡처 구현 ─────────────────────────────────────────
 
     def _capture_dxcam(self) -> Image.Image:
         self._init_dxcam()
-        if not self._use_dxcam:           # 초기화 실패 → mss 폴백
+        if not self._use_dxcam:
             return self._capture_mss()
-        frame = self._cam.get_latest_frame()  # video_mode=True이므로 항상 반환
-        return Image.fromarray(frame)
+
+        # grab() 재시도 (화면 변화 없으면 None 반환)
+        for _ in range(10):
+            frame = self._cam.grab()
+            if frame is not None:
+                return Image.fromarray(frame)
+            time.sleep(0.033)
+
+        # 지속 실패 → mss 폴백
+        print("[화면캡처] dxcam grab 반복 실패 → mss 폴백")
+        self._use_dxcam = False
+        return self._capture_mss()
 
     def _capture_mss(self) -> Image.Image:
+        if not _MSS_INSTALLED:
+            raise RuntimeError("mss 미설치. pip install mss 실행 필요")
         if not hasattr(self._mss_local, 'sct'):
             self._mss_local.sct = _mss_mod.mss()
-        sct = self._mss_local.sct
+        sct  = self._mss_local.sct
         shot = sct.grab(sct.monitors[1])
         return Image.frombytes('RGB', shot.size, shot.bgra, 'raw', 'BGRX')
-
-    # ── 공개 API ──────────────────────────────────────────
 
     def capture(self) -> bytes:
         with self._lock:
@@ -103,6 +113,14 @@ class ScreenCapture:
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=quality, optimize=True)
         return buf.getvalue()
+
+    def cleanup(self):
+        if self._cam:
+            try:
+                del self._cam
+            except Exception:
+                pass
+            self._cam = None
 
     def get_screen_size(self) -> tuple:
         from ctypes import windll

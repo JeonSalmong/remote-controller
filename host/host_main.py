@@ -62,15 +62,17 @@ class RemoteHost:
             except OSError:
                 break
 
-            print(f"\n연결 시도: {addr}")
+            print(f"\n[연결] 접속 시도: {addr}")
+            print("[연결] PIN 인증 처리 중...")
             if not self._authenticate(conn):
-                print("인증 실패 - 연결 거부")
+                print("[연결] 인증 실패 - 연결 거부")
                 conn.close()
                 continue
 
             self.client_conn = conn
             self.running = True
-            print("인증 성공! 원격 제어 세션 시작")
+            print("[연결] 인증 성공! 세션 시작")
+            print("[연결] 화면 캡처 스레드 시작 중...")
 
             t_screen = threading.Thread(target=self._send_screen, daemon=True)
             t_input  = threading.Thread(target=self._recv_input,  daemon=True)
@@ -105,11 +107,14 @@ class RemoteHost:
         try:
             msg_type, data = recv_message(conn)
             if msg_type != MSG_AUTH:
+                print(f"[인증] 예상치 못한 메시지 타입: {msg_type:#x}")
                 return False
             payload = json.loads(data.decode())
             if verify_pin(payload.get('pin', ''), self.pin_hash):
                 conn.sendall(pack_message(MSG_AUTH, json.dumps({'status': 'ok'}).encode()))
+                print("[인증] PIN 확인 완료")
                 return True
+            print("[인증] PIN 불일치")
             conn.sendall(pack_message(MSG_AUTH, json.dumps({'status': 'fail'}).encode()))
             return False
         except Exception as e:
