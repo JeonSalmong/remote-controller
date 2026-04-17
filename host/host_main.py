@@ -5,7 +5,6 @@ import json
 import sys
 import os
 import signal
-import ctypes
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -62,17 +61,15 @@ class RemoteHost:
             except OSError:
                 break
 
-            print(f"\n[연결] 접속 시도: {addr}")
-            print("[연결] PIN 인증 처리 중...")
+            print(f"\n연결 시도: {addr}")
             if not self._authenticate(conn):
-                print("[연결] 인증 실패 - 연결 거부")
+                print("인증 실패 - 연결 거부")
                 conn.close()
                 continue
 
             self.client_conn = conn
             self.running = True
-            print("[연결] 인증 성공! 세션 시작")
-            print("[연결] 화면 캡처 스레드 시작 중...")
+            print("인증 성공! 원격 제어 세션 시작")
 
             t_screen = threading.Thread(target=self._send_screen, daemon=True)
             t_input  = threading.Thread(target=self._recv_input,  daemon=True)
@@ -91,12 +88,6 @@ class RemoteHost:
             t_input.join(timeout=2)
 
             self.running = False
-            # 다음 세션을 위해 dxcam 재시작할 수 있도록 정리
-            self.capture.cleanup()
-            self.capture = ScreenCapture(
-                quality=self.capture.quality,
-                scale=self.capture.scale
-            )
             if not self._stop_event.is_set():
                 print("세션 종료. 다음 연결 대기 중... (종료: Ctrl+C)")
 
@@ -107,14 +98,11 @@ class RemoteHost:
         try:
             msg_type, data = recv_message(conn)
             if msg_type != MSG_AUTH:
-                print(f"[인증] 예상치 못한 메시지 타입: {msg_type:#x}")
                 return False
             payload = json.loads(data.decode())
             if verify_pin(payload.get('pin', ''), self.pin_hash):
                 conn.sendall(pack_message(MSG_AUTH, json.dumps({'status': 'ok'}).encode()))
-                print("[인증] PIN 확인 완료")
                 return True
-            print("[인증] PIN 불일치")
             conn.sendall(pack_message(MSG_AUTH, json.dumps({'status': 'fail'}).encode()))
             return False
         except Exception as e:
@@ -122,28 +110,15 @@ class RemoteHost:
             return False
 
     def _send_screen(self):
-        fail_count = 0
-        MAX_FAILS  = 5  # 연속 실패 허용 횟수
-
         while self.running:
             try:
                 frame = self.capture.capture()
                 self.client_conn.sendall(pack_message(MSG_SCREEN, frame))
-                fail_count = 0
                 time.sleep(self.frame_interval)
-            except OSError as e:
-                # 소켓 오류 = 연결 끊김 → 즉시 종료
-                print(f"[화면전송] 소켓 오류: {e}")
+            except Exception as e:
+                print(f"화면 전송 오류: {e}")
                 self.running = False
                 break
-            except Exception as e:
-                fail_count += 1
-                print(f"[화면전송] 캡처 오류({fail_count}/{MAX_FAILS}): {e}")
-                if fail_count >= MAX_FAILS:
-                    print("[화면전송] 최대 재시도 초과 - 연결 종료")
-                    self.running = False
-                    break
-                time.sleep(0.5)  # 잠깐 대기 후 재시도
 
     def _recv_input(self):
         file_server = FileServer(self.client_conn)
@@ -182,29 +157,14 @@ class RemoteHost:
             return '127.0.0.1'
 
 
-def _is_admin() -> bool:
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except Exception:
-        return False
-
-
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='원격 데스크톱 호스트')
-    parser.add_argument('--port',    type=int,   default=9999, help='리스닝 포트 (기본: 9999)')
-    parser.add_argument('--quality', type=int,   default=80,   help='JPEG 품질 1-100 (기본: 80)')
-    parser.add_argument('--scale',   type=float, default=1.0,  help='화면 스케일 0.1-1.0 (기본: 1.0)')
-    parser.add_argument('--fps',     type=int,   default=30,   help='목표 FPS (기본: 30)')
+    parser.add_argument('--port',    type=int,   default=9999,  help='리스닝 포트 (기본: 9999)')
+    parser.add_argument('--quality', type=int,   default=50,    help='JPEG 품질 1-100 (기본: 50)')
+    parser.add_argument('--scale',   type=float, default=0.75,  help='화면 스케일 0.1-1.0 (기본: 0.75)')
+    parser.add_argument('--fps',     type=int,   default=30,    help='목표 FPS (기본: 30)')
     args = parser.parse_args()
-
-    if not _is_admin():
-        print("=" * 50)
-        print("  [경고] 관리자 권한으로 실행되지 않았습니다.")
-        print("  Windows 잠금 화면 캡처 및 입력은")
-        print("  관리자 권한 실행 시에만 정상 동작합니다.")
-        print("  run_host.py 를 '관리자 권한으로 실행' 하세요.")
-        print("=" * 50)
 
     host = RemoteHost(port=args.port, quality=args.quality, scale=args.scale, fps=args.fps)
     host.start()
