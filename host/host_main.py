@@ -4,6 +4,7 @@ import time
 import json
 import sys
 import os
+import signal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -26,10 +27,21 @@ class RemoteHost:
         self.frame_interval = 1.0 / fps
 
     def start(self):
+        self._stop_event = threading.Event()
+
+        # Ctrl+C / 프로세스 종료 시그널 처리
+        def _handle_signal(sig, frame):
+            print("\n종료 신호 수신. 호스트를 종료합니다...")
+            self._stop_event.set()
+
+        signal.signal(signal.SIGINT,  _handle_signal)
+        signal.signal(signal.SIGTERM, _handle_signal)
+
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind(('0.0.0.0', self.port))
         server.listen(1)
+        server.settimeout(1.0)  # accept() 블로킹 해제 주기 (1초마다 종료 여부 확인)
 
         local_ip = self._get_local_ip()
         print("=" * 50)
@@ -39,34 +51,48 @@ class RemoteHost:
         print(f"  포트     : {self.port}")
         print(f"  접속 PIN : {self.pin}")
         print("=" * 50)
-        print("클라이언트 연결 대기 중...")
+        print("클라이언트 연결 대기 중... (종료: Ctrl+C)")
 
-        while True:
+        while not self._stop_event.is_set():
             try:
                 conn, addr = server.accept()
-                print(f"\n연결 시도: {addr}")
-                if not self._authenticate(conn):
-                    print("인증 실패 - 연결 거부")
-                    conn.close()
-                    continue
-
-                self.client_conn = conn
-                self.running = True
-                print("인증 성공! 원격 제어 세션 시작")
-
-                t_screen = threading.Thread(target=self._send_screen, daemon=True)
-                t_input  = threading.Thread(target=self._recv_input,  daemon=True)
-                t_screen.start()
-                t_input.start()
-                t_screen.join()
-                t_input.join()
-
-                print("세션 종료. 다음 연결 대기 중...")
-                self.running = False
-            except KeyboardInterrupt:
-                print("\n호스트 종료")
-                server.close()
+            except socket.timeout:
+                continue  # 1초마다 _stop_event 확인
+            except OSError:
                 break
+
+            print(f"\n연결 시도: {addr}")
+            if not self._authenticate(conn):
+                print("인증 실패 - 연결 거부")
+                conn.close()
+                continue
+
+            self.client_conn = conn
+            self.running = True
+            print("인증 성공! 원격 제어 세션 시작")
+
+            t_screen = threading.Thread(target=self._send_screen, daemon=True)
+            t_input  = threading.Thread(target=self._recv_input,  daemon=True)
+            t_screen.start()
+            t_input.start()
+
+            # 세션 중에도 Ctrl+C 감지
+            while t_screen.is_alive() and t_input.is_alive():
+                if self._stop_event.is_set():
+                    self.running = False
+                    conn.close()
+                    break
+                time.sleep(0.5)
+
+            t_screen.join(timeout=2)
+            t_input.join(timeout=2)
+
+            self.running = False
+            if not self._stop_event.is_set():
+                print("세션 종료. 다음 연결 대기 중... (종료: Ctrl+C)")
+
+        server.close()
+        print("호스트 종료 완료.")
 
     def _authenticate(self, conn) -> bool:
         try:
