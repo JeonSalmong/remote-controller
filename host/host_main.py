@@ -205,13 +205,6 @@ if __name__ == '__main__':
         print("  관리자 권한 실행 시에만 정상 동작합니다.")
         print("  run_host.py 를 '관리자 권한으로 실행' 하세요.")
         print("=" * 50)
-    else:
-        from host.screen_capture import _USE_DXCAM
-        if _USE_DXCAM:
-            print("[정보] dxcam (DXGI) 사용 중 - 잠금 화면 캡처 지원")
-        else:
-            print("[경고] dxcam 미설치 - 잠금 화면 캡처 불가")
-            print("       pip install dxcam  으로 설치하세요.")
 
     host = RemoteHost(port=args.port, quality=args.quality, scale=args.scale, fps=args.fps)
     host.start()
