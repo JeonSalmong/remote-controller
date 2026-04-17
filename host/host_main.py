@@ -16,9 +16,9 @@ from host.file_transfer import FileServer
 
 
 class RemoteHost:
-    def __init__(self, port: int = 9999, quality: int = 80, scale: float = 1.0, fps: int = 30):
+    def __init__(self, port: int = 9999, quality: int = 80, scale: float = 1.0, fps: int = 30, pin: str = ''):
         self.port = port
-        self.pin = generate_pin()
+        self.pin = pin if pin else generate_pin()
         self.pin_hash = hash_pin(self.pin)
         self.capture = ScreenCapture(quality=quality, scale=scale)
         self.handler = InputHandler(scale=scale)
@@ -161,10 +161,11 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='원격 데스크톱 호스트')
     parser.add_argument('--port',    type=int,   default=9999,  help='리스닝 포트 (기본: 9999)')
-    parser.add_argument('--quality', type=int,   default=50,    help='JPEG 품질 1-100 (기본: 50)')
-    parser.add_argument('--scale',   type=float, default=0.75,  help='화면 스케일 0.1-1.0 (기본: 0.75)')
+    parser.add_argument('--quality', type=int,   default=80,    help='JPEG 품질 1-100 (기본: 80)')
+    parser.add_argument('--scale',   type=float, default=1.0,   help='화면 스케일 0.1-1.0 (기본: 1.0)')
     parser.add_argument('--fps',     type=int,   default=30,    help='목표 FPS (기본: 30)')
+    parser.add_argument('--pin',     type=str,   default='',    help='고정 PIN (미지정 시 랜덤 생성)')
     args = parser.parse_args()
 
-    host = RemoteHost(port=args.port, quality=args.quality, scale=args.scale, fps=args.fps)
+    host = RemoteHost(port=args.port, quality=args.quality, scale=args.scale, fps=args.fps, pin=args.pin)
     host.start()
