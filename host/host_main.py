@@ -61,6 +61,7 @@ class RemoteHost:
             except OSError:
                 break
 
+            conn.settimeout(None)  # 서버 소켓 타임아웃 상속 해제 (blocking 모드)
             print(f"\n연결 시도: {addr}")
             if not self._authenticate(conn):
                 print("인증 실패 - 연결 거부")
