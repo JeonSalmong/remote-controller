@@ -36,3 +36,11 @@ def recv_message(sock) -> tuple:
     msg_type, size = unpack_header(header)
     data = recv_exact(sock, size) if size > 0 else b''
     return msg_type, data
+
+
+def unpack_message(frame: bytes) -> tuple:
+    """WebSocket 바이너리 프레임 파싱. (msg_type, payload) 반환"""
+    if len(frame) < HEADER_SIZE:
+        raise ValueError(f"프레임 크기 부족: {len(frame)}")
+    msg_type, size = unpack_header(frame[:HEADER_SIZE])
+    return msg_type, frame[HEADER_SIZE:HEADER_SIZE + size]
