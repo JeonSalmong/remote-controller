@@ -5,6 +5,7 @@ import json
 import sys
 import os
 import signal
+import ctypes
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -157,14 +158,36 @@ class RemoteHost:
             return '127.0.0.1'
 
 
+def _is_admin() -> bool:
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='원격 데스크톱 호스트')
-    parser.add_argument('--port',    type=int,   default=9999,  help='리스닝 포트 (기본: 9999)')
-    parser.add_argument('--quality', type=int,   default=50,    help='JPEG 품질 1-100 (기본: 50)')
-    parser.add_argument('--scale',   type=float, default=0.75,  help='화면 스케일 0.1-1.0 (기본: 0.75)')
-    parser.add_argument('--fps',     type=int,   default=30,    help='목표 FPS (기본: 30)')
+    parser.add_argument('--port',    type=int,   default=9999, help='리스닝 포트 (기본: 9999)')
+    parser.add_argument('--quality', type=int,   default=80,   help='JPEG 품질 1-100 (기본: 80)')
+    parser.add_argument('--scale',   type=float, default=1.0,  help='화면 스케일 0.1-1.0 (기본: 1.0)')
+    parser.add_argument('--fps',     type=int,   default=30,   help='목표 FPS (기본: 30)')
     args = parser.parse_args()
+
+    if not _is_admin():
+        print("=" * 50)
+        print("  [경고] 관리자 권한으로 실행되지 않았습니다.")
+        print("  Windows 잠금 화면 캡처 및 입력은")
+        print("  관리자 권한 실행 시에만 정상 동작합니다.")
+        print("  run_host.py 를 '관리자 권한으로 실행' 하세요.")
+        print("=" * 50)
+    else:
+        from host.screen_capture import _USE_DXCAM
+        if _USE_DXCAM:
+            print("[정보] dxcam (DXGI) 사용 중 - 잠금 화면 캡처 지원")
+        else:
+            print("[경고] dxcam 미설치 - 잠금 화면 캡처 불가")
+            print("       pip install dxcam  으로 설치하세요.")
 
     host = RemoteHost(port=args.port, quality=args.quality, scale=args.scale, fps=args.fps)
     host.start()
