@@ -38,6 +38,10 @@ def _map_key(keysym: str) -> str:
 
 
 class InputHandler:
+    def __init__(self, scale: float = 0.75):
+        # 클라이언트 좌표는 캡처된 축소 이미지 기준이므로 역스케일로 원본 해상도 복원
+        self.inv_scale = 1.0 / scale
+
     def handle(self, msg_type: int, data: bytes):
         try:
             payload = json.loads(data.decode())
@@ -50,7 +54,8 @@ class InputHandler:
 
     def _handle_mouse(self, p):
         action = p.get('action')
-        x, y = p.get('x', 0), p.get('y', 0)
+        x = int(p.get('x', 0) * self.inv_scale)
+        y = int(p.get('y', 0) * self.inv_scale)
 
         if action == 'move':
             pyautogui.moveTo(x, y)

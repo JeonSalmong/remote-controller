@@ -21,7 +21,7 @@ class RemoteHost:
         self.pin = generate_pin()
         self.pin_hash = hash_pin(self.pin)
         self.capture = ScreenCapture(quality=quality, scale=scale)
-        self.handler = InputHandler()
+        self.handler = InputHandler(scale=scale)
         self.client_conn = None
         self.running = False
         self.frame_interval = 1.0 / fps
