@@ -95,15 +95,29 @@ class RemoteClient:
         # 기본값 고화질 버튼 강조
         self._highlight_quality_btn('고화질')
 
+        # 전체화면 버튼
+        tk.Label(toolbar, text='│', bg='#2b2b2b', fg='#555555').pack(side=tk.LEFT, padx=4)
+        tk.Button(toolbar, text='전체화면 (F11)', command=self._toggle_fullscreen,
+                  bg='#3c3f41', fg='white', relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=2, pady=2)
+
         tk.Button(toolbar, text='연결 끊기', command=self._disconnect,
                   bg='#8b0000', fg='white', relief=tk.FLAT, padx=8).pack(side=tk.RIGHT, padx=4, pady=2)
 
         self.status_var = tk.StringVar(value='연결 안 됨')
         tk.Label(toolbar, textvariable=self.status_var, bg='#2b2b2b', fg='#aaaaaa').pack(side=tk.RIGHT, padx=8)
 
+        self._toolbar = toolbar
+
         # 화면 뷰어
         self.viewer = ScreenViewer(self.root)
         self.viewer.pack(fill=tk.BOTH, expand=True)
+
+        # 전체화면 종료 힌트 오버레이 (평소엔 숨김)
+        self._fs_hint = tk.Label(
+            self.root, text='F11 또는 ESC: 전체화면 종료',
+            bg='#000000', fg='#ffffff', font=('Arial', 11)
+        )
+        self._fs_active = False
 
         self._bind_events()
 
@@ -286,11 +300,20 @@ class RemoteClient:
         try:
             self.sock.sendall(pack_message(MSG_QUALITY, payload))
             self._highlight_quality_btn(label)
-            self.status_var.set(
-                self.status_var.get().split('|')[0].strip() + f' | {label} (q={quality}, s={scale})'
-            )
+            base = self.status_var.get().split('|')[0].strip()
+            self.status_var.set(f'{base} | {label}')
         except Exception:
             pass
+
+    def _toggle_fullscreen(self):
+        self._fs_active = not self._fs_active
+        self.root.attributes('-fullscreen', self._fs_active)
+        if self._fs_active:
+            self._toolbar.pack_forget()
+            self._fs_hint.place(relx=1.0, rely=0.0, anchor='ne', x=-8, y=8)
+        else:
+            self._fs_hint.place_forget()
+            self._toolbar.pack(fill=tk.X, side=tk.TOP, before=self.viewer)
 
     def _disconnect(self):
         self.running = False
@@ -304,6 +327,9 @@ class RemoteClient:
 
     # ── 이벤트 바인딩 ──────────────────────────────────────
 
+    # 클라이언트가 직접 처리할 키 (호스트로 전송하지 않음)
+    _LOCAL_KEYS = {'F11', 'Escape'}
+
     def _bind_events(self):
         v = self.viewer
         v.bind('<Motion>',      self._on_move)
@@ -316,7 +342,13 @@ class RemoteClient:
         v.bind('<B1-Motion>',   self._on_drag)
         self.root.bind('<KeyPress>',   self._on_key_press)
         self.root.bind('<KeyRelease>', self._on_key_release)
+        self.root.bind('<F11>',   lambda e: self._toggle_fullscreen())
+        self.root.bind('<Escape>', lambda e: self._exit_fullscreen())
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
+
+    def _exit_fullscreen(self):
+        if self._fs_active:
+            self._toggle_fullscreen()
 
     def _send_mouse(self, action, x, y, **kwargs):
         if not self.running:
@@ -344,7 +376,7 @@ class RemoteClient:
         self._send_mouse('drag', x, y)
 
     def _on_key_press(self, e):
-        if not self.running:
+        if not self.running or e.keysym in self._LOCAL_KEYS:
             return
         payload = json.dumps({'action': 'press', 'key': e.keysym}).encode()
         try:
@@ -353,7 +385,7 @@ class RemoteClient:
             pass
 
     def _on_key_release(self, e):
-        if not self.running:
+        if not self.running or e.keysym in self._LOCAL_KEYS:
             return
         payload = json.dumps({'action': 'release', 'key': e.keysym}).encode()
         try:
