@@ -89,6 +89,12 @@ class RemoteHost:
             t_input.join(timeout=2)
 
             self.running = False
+            # 다음 세션을 위해 dxcam 재시작할 수 있도록 정리
+            self.capture.cleanup()
+            self.capture = ScreenCapture(
+                quality=self.capture.quality,
+                scale=self.capture.scale
+            )
             if not self._stop_event.is_set():
                 print("세션 종료. 다음 연결 대기 중... (종료: Ctrl+C)")
 
@@ -111,15 +117,28 @@ class RemoteHost:
             return False
 
     def _send_screen(self):
+        fail_count = 0
+        MAX_FAILS  = 5  # 연속 실패 허용 횟수
+
         while self.running:
             try:
                 frame = self.capture.capture()
                 self.client_conn.sendall(pack_message(MSG_SCREEN, frame))
+                fail_count = 0
                 time.sleep(self.frame_interval)
-            except Exception as e:
-                print(f"화면 전송 오류: {e}")
+            except OSError as e:
+                # 소켓 오류 = 연결 끊김 → 즉시 종료
+                print(f"[화면전송] 소켓 오류: {e}")
                 self.running = False
                 break
+            except Exception as e:
+                fail_count += 1
+                print(f"[화면전송] 캡처 오류({fail_count}/{MAX_FAILS}): {e}")
+                if fail_count >= MAX_FAILS:
+                    print("[화면전송] 최대 재시도 초과 - 연결 종료")
+                    self.running = False
+                    break
+                time.sleep(0.5)  # 잠깐 대기 후 재시도
 
     def _recv_input(self):
         file_server = FileServer(self.client_conn)

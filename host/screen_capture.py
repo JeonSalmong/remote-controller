@@ -4,10 +4,15 @@ from PIL import Image
 
 try:
     import dxcam
-    _USE_DXCAM = True
+    _DXCAM_INSTALLED = True
 except ImportError:
-    _USE_DXCAM = False
-    import mss
+    _DXCAM_INSTALLED = False
+
+try:
+    import mss as _mss_mod
+    _MSS_INSTALLED = True
+except ImportError:
+    _MSS_INSTALLED = False
 
 
 class ScreenCapture:
@@ -15,11 +20,12 @@ class ScreenCapture:
         self._quality = quality
         self._scale   = scale
         self._lock    = threading.Lock()
-        self._cam     = None
-        self._last_frame = None   # dxcam이 None 반환 시 이전 프레임 재사용
-        self._mss_local  = threading.local()  # mss 폴백용
 
-    # ── thread-safe 프로퍼티 ───────────────────────────────
+        self._cam        = None   # dxcam 인스턴스
+        self._use_dxcam  = _DXCAM_INSTALLED  # 런타임 폴백 시 False로 전환
+        self._mss_local  = threading.local()  # mss 폴백용 스레드-로컬
+
+    # ── thread-safe 프로퍼티 ──────────────────────────────
 
     @property
     def quality(self):
@@ -41,19 +47,54 @@ class ScreenCapture:
         with self._lock:
             self._scale = v
 
-    # ── 캡처 ──────────────────────────────────────────────
+    # ── dxcam 초기화 ─────────────────────────────────────
 
     def _init_dxcam(self):
-        """dxcam 인스턴스 초기화 (호출 스레드에서 한 번만)"""
-        if self._cam is None:
-            self._cam = dxcam.create(output_color='RGB')
+        """처음 호출 시 dxcam 시작. 실패하면 mss로 자동 폴백."""
+        if self._cam is not None:
+            return
+        try:
+            cam = dxcam.create(output_color='RGB')
+            # video_mode=True: get_latest_frame()이 항상 프레임 반환 (None 없음)
+            cam.start(target_fps=60, video_mode=True)
+            self._cam = cam
+            print("[화면캡처] dxcam 시작 완료 (잠금화면 캡처 지원)")
+        except Exception as e:
+            print(f"[화면캡처] dxcam 초기화 실패: {e}")
+            print("[화면캡처] mss 폴백 모드로 전환 (잠금화면 캡처 불가)")
+            self._use_dxcam = False
+
+    def cleanup(self):
+        if self._cam:
+            try:
+                self._cam.stop()
+            except Exception:
+                pass
+
+    # ── 캡처 구현 ─────────────────────────────────────────
+
+    def _capture_dxcam(self) -> Image.Image:
+        self._init_dxcam()
+        if not self._use_dxcam:           # 초기화 실패 → mss 폴백
+            return self._capture_mss()
+        frame = self._cam.get_latest_frame()  # video_mode=True이므로 항상 반환
+        return Image.fromarray(frame)
+
+    def _capture_mss(self) -> Image.Image:
+        if not hasattr(self._mss_local, 'sct'):
+            self._mss_local.sct = _mss_mod.mss()
+        sct = self._mss_local.sct
+        shot = sct.grab(sct.monitors[1])
+        return Image.frombytes('RGB', shot.size, shot.bgra, 'raw', 'BGRX')
+
+    # ── 공개 API ──────────────────────────────────────────
 
     def capture(self) -> bytes:
         with self._lock:
             quality = self._quality
             scale   = self._scale
 
-        img = self._capture_dxcam() if _USE_DXCAM else self._capture_mss()
+        img = self._capture_dxcam() if self._use_dxcam else self._capture_mss()
 
         if scale != 1.0:
             w, h = img.size
@@ -62,32 +103,6 @@ class ScreenCapture:
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=quality, optimize=True)
         return buf.getvalue()
-
-    def _capture_dxcam(self) -> Image.Image:
-        self._init_dxcam()
-        frame = self._cam.grab()   # 변화 없으면 None
-
-        if frame is not None:
-            self._last_frame = frame
-        elif self._last_frame is None:
-            # 첫 캡처 시 None이면 잠깐 대기 후 재시도
-            import time; time.sleep(0.05)
-            frame = self._cam.grab()
-            if frame is None:
-                raise RuntimeError("첫 화면 캡처 실패")
-            self._last_frame = frame
-        else:
-            frame = self._last_frame   # 화면 변화 없음 → 이전 프레임 재사용
-
-        return Image.fromarray(frame)
-
-    def _capture_mss(self) -> Image.Image:
-        """dxcam 미설치 시 폴백 (잠금화면 캡처 불가)"""
-        if not hasattr(self._mss_local, 'sct'):
-            self._mss_local.sct = mss.mss()
-        sct = self._mss_local.sct
-        shot = sct.grab(sct.monitors[1])
-        return Image.frombytes('RGB', shot.size, shot.bgra, 'raw', 'BGRX')
 
     def get_screen_size(self) -> tuple:
         from ctypes import windll
