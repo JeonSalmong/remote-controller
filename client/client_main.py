@@ -1,16 +1,49 @@
 import socket
 import threading
 import tkinter as tk
-from tkinter import simpledialog, messagebox, filedialog
+from tkinter import simpledialog, messagebox, filedialog, ttk
 import json
 import sys
 import os
+import base64
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common.protocol import pack_message, recv_message, MSG_MOUSE, MSG_KEYBOARD, MSG_AUTH, MSG_SCREEN
 from client.screen_viewer import ScreenViewer
 from client.file_transfer import FileClient
+
+
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'connection_history.json')
+
+
+def _load_history() -> list:
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _save_history(ip: str, port: int, pin: str):
+    history = _load_history()
+    # 동일 IP+포트 항목이 있으면 제거 후 최신으로 앞에 추가
+    history = [h for h in history if not (h['ip'] == ip and h['port'] == port)]
+    history.insert(0, {
+        'ip': ip,
+        'port': port,
+        'pin': base64.b64encode(pin.encode()).decode(),
+    })
+    history = history[:10]  # 최대 10개 보관
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
+
+def _decode_pin(encoded: str) -> str:
+    try:
+        return base64.b64decode(encoded.encode()).decode()
+    except Exception:
+        return ''
 
 
 class RemoteClient:
@@ -52,34 +85,60 @@ class RemoteClient:
 
     def _show_connect_dialog(self):
         self._connect_cancelled = False
+        history = _load_history()
+
         dialog = tk.Toplevel(self.root)
         dialog.title('호스트 연결')
-        dialog.geometry('320x210')
+        dialog.geometry('360x250')
         dialog.resizable(False, False)
         dialog.grab_set()
 
-        tk.Label(dialog, text='호스트 IP 주소:').grid(row=0, column=0, padx=12, pady=10, sticky='e')
+        # 최근 접속 드롭다운
+        tk.Label(dialog, text='최근 접속:').grid(row=0, column=0, padx=12, pady=8, sticky='e')
+        history_labels = [f"{h['ip']}:{h['port']}" for h in history]
+        history_var = tk.StringVar(value=history_labels[0] if history_labels else '')
+        history_cb = ttk.Combobox(dialog, textvariable=history_var,
+                                     values=history_labels, width=20, state='readonly')
+        history_cb.grid(row=0, column=1, padx=8, sticky='w')
+
+        tk.Label(dialog, text='호스트 IP:').grid(row=1, column=0, padx=12, pady=6, sticky='e')
         ip_var = tk.StringVar()
-        tk.Entry(dialog, textvariable=ip_var, width=22).grid(row=0, column=1, padx=8)
+        tk.Entry(dialog, textvariable=ip_var, width=22).grid(row=1, column=1, padx=8)
 
-        tk.Label(dialog, text='포트:').grid(row=1, column=0, padx=12, pady=6, sticky='e')
+        tk.Label(dialog, text='포트:').grid(row=2, column=0, padx=12, pady=6, sticky='e')
         port_var = tk.StringVar(value='9999')
-        tk.Entry(dialog, textvariable=port_var, width=22).grid(row=1, column=1, padx=8)
+        tk.Entry(dialog, textvariable=port_var, width=22).grid(row=2, column=1, padx=8)
 
-        tk.Label(dialog, text='PIN 번호:').grid(row=2, column=0, padx=12, pady=6, sticky='e')
+        tk.Label(dialog, text='PIN 번호:').grid(row=3, column=0, padx=12, pady=6, sticky='e')
         pin_var = tk.StringVar()
-        tk.Entry(dialog, textvariable=pin_var, width=22, show='*').grid(row=2, column=1, padx=8)
+        tk.Entry(dialog, textvariable=pin_var, width=22, show='*').grid(row=3, column=1, padx=8)
+
+        # 최근 접속 선택 시 자동 입력
+        def on_history_select(e=None):
+            sel = history_var.get()
+            for h in history:
+                if f"{h['ip']}:{h['port']}" == sel:
+                    ip_var.set(h['ip'])
+                    port_var.set(str(h['port']))
+                    pin_var.set(_decode_pin(h['pin']))
+                    break
+
+        history_cb.bind('<<ComboboxSelected>>', on_history_select)
+
+        # 저장된 항목이 있으면 첫 번째 항목 자동 입력
+        if history:
+            on_history_select()
 
         status_lbl = tk.Label(dialog, text='', fg='gray')
-        status_lbl.grid(row=3, column=0, columnspan=2, pady=2)
+        status_lbl.grid(row=4, column=0, columnspan=2, pady=2)
 
         btn_frame = tk.Frame(dialog)
-        btn_frame.grid(row=4, column=0, columnspan=2, pady=10)
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=8)
 
         connect_btn = tk.Button(btn_frame, text='연결', width=10)
         connect_btn.pack(side=tk.LEFT, padx=6)
-        cancel_btn  = tk.Button(btn_frame, text='취소', width=10,
-                                command=lambda: self.root.destroy())
+        cancel_btn = tk.Button(btn_frame, text='취소', width=10,
+                               command=lambda: self.root.destroy())
         cancel_btn.pack(side=tk.LEFT, padx=6)
 
         def do_connect():
@@ -90,11 +149,11 @@ class RemoteClient:
                 messagebox.showerror('오류', 'IP와 PIN을 입력해주세요', parent=dialog)
                 return
             port = int(port_str or '9999')
+            _save_history(host_ip, port, pin)  # 성공 여부와 관계없이 입력값 저장
             connect_btn.config(state=tk.DISABLED)
             cancel_btn.config(command=self._cancel_connect)
             status_lbl.config(text='연결 중...', fg='orange')
             dialog.update()
-            # 연결을 별도 스레드에서 실행 → UI 응답성 유지
             threading.Thread(
                 target=self._connect,
                 args=(host_ip, port, pin, dialog, status_lbl, connect_btn),
@@ -103,7 +162,6 @@ class RemoteClient:
 
         connect_btn.config(command=do_connect)
         dialog.protocol('WM_DELETE_WINDOW', lambda: self.root.destroy())
-        # Enter 키로 연결
         dialog.bind('<Return>', lambda e: do_connect())
 
     def _cancel_connect(self):

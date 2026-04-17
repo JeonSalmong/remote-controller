@@ -7,3 +7,4 @@ dist/
 build/
 .venv/
 venv/
+client/connection_history.json
