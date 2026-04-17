@@ -6,6 +6,7 @@ MSG_KEYBOARD = 0x03
 MSG_FILE     = 0x04
 MSG_AUTH     = 0x05
 MSG_FILE_REQ = 0x06
+MSG_QUALITY  = 0x07  # 클라이언트 → 호스트: 화질 변경 요청
 
 HEADER_SIZE = 5  # 1(type) + 4(length)
 

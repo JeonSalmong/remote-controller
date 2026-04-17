@@ -5,7 +5,7 @@ import io
 
 
 class ScreenCapture:
-    def __init__(self, quality: int = 50, scale: float = 0.75):
+    def __init__(self, quality: int = 80, scale: float = 1.0):
         self.quality = quality
         self.scale = scale
         self._local = threading.local()

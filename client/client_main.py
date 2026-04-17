@@ -9,7 +9,7 @@ import base64
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from common.protocol import pack_message, recv_message, MSG_MOUSE, MSG_KEYBOARD, MSG_AUTH, MSG_SCREEN
+from common.protocol import pack_message, recv_message, MSG_MOUSE, MSG_KEYBOARD, MSG_AUTH, MSG_SCREEN, MSG_QUALITY
 from client.screen_viewer import ScreenViewer
 from client.file_transfer import FileClient
 
@@ -61,6 +61,14 @@ class RemoteClient:
         self._build_ui()
         self._show_connect_dialog()
 
+    # 화질 프리셋: (label, quality, scale)
+    QUALITY_PRESETS = [
+        ('저화질',  50, 0.6),
+        ('중화질',  75, 0.85),
+        ('고화질',  85, 1.0),
+        ('최고화질', 95, 1.0),
+    ]
+
     def _build_ui(self):
         # 툴바
         toolbar = tk.Frame(self.root, bg='#2b2b2b', height=30)
@@ -71,6 +79,22 @@ class RemoteClient:
                   bg='#3c3f41', fg='white', relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=2, pady=2)
         tk.Button(toolbar, text='파일 받기', command=self._request_file,
                   bg='#3c3f41', fg='white', relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=2, pady=2)
+
+        # 화질 구분선
+        tk.Label(toolbar, text='│', bg='#2b2b2b', fg='#555555').pack(side=tk.LEFT, padx=4)
+        tk.Label(toolbar, text='화질:', bg='#2b2b2b', fg='#aaaaaa').pack(side=tk.LEFT)
+
+        self._quality_btns = []
+        for label, q, s in self.QUALITY_PRESETS:
+            btn = tk.Button(toolbar, text=label,
+                            command=lambda q=q, s=s, lbl=label: self._set_quality(q, s, lbl),
+                            bg='#3c3f41', fg='white', relief=tk.FLAT, padx=6)
+            btn.pack(side=tk.LEFT, padx=1, pady=2)
+            self._quality_btns.append((label, btn))
+
+        # 기본값 고화질 버튼 강조
+        self._highlight_quality_btn('고화질')
+
         tk.Button(toolbar, text='연결 끊기', command=self._disconnect,
                   bg='#8b0000', fg='white', relief=tk.FLAT, padx=8).pack(side=tk.RIGHT, padx=4, pady=2)
 
@@ -247,6 +271,26 @@ class RemoteClient:
         self.running = False
         self.status_var.set('연결 끊김')
         messagebox.showwarning('연결 끊김', '호스트와의 연결이 끊겼습니다.')
+
+    def _highlight_quality_btn(self, active_label: str):
+        for label, btn in self._quality_btns:
+            if label == active_label:
+                btn.config(bg='#2d6a9f', relief=tk.SUNKEN)
+            else:
+                btn.config(bg='#3c3f41', relief=tk.FLAT)
+
+    def _set_quality(self, quality: int, scale: float, label: str):
+        if not self.running:
+            return
+        payload = json.dumps({'quality': quality, 'scale': scale}).encode()
+        try:
+            self.sock.sendall(pack_message(MSG_QUALITY, payload))
+            self._highlight_quality_btn(label)
+            self.status_var.set(
+                self.status_var.get().split('|')[0].strip() + f' | {label} (q={quality}, s={scale})'
+            )
+        except Exception:
+            pass
 
     def _disconnect(self):
         self.running = False

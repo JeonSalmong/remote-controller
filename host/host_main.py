@@ -8,7 +8,7 @@ import signal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from common.protocol import pack_message, recv_message, MSG_SCREEN, MSG_AUTH, MSG_FILE, MSG_FILE_REQ
+from common.protocol import pack_message, recv_message, MSG_SCREEN, MSG_AUTH, MSG_FILE, MSG_FILE_REQ, MSG_QUALITY
 from common.auth import generate_pin, hash_pin, verify_pin
 from host.screen_capture import ScreenCapture
 from host.input_handler import InputHandler
@@ -16,7 +16,7 @@ from host.file_transfer import FileServer
 
 
 class RemoteHost:
-    def __init__(self, port: int = 9999, quality: int = 50, scale: float = 0.75, fps: int = 30):
+    def __init__(self, port: int = 9999, quality: int = 80, scale: float = 1.0, fps: int = 30):
         self.port = port
         self.pin = generate_pin()
         self.pin_hash = hash_pin(self.pin)
@@ -127,6 +127,14 @@ class RemoteHost:
                 msg_type, data = recv_message(self.client_conn)
                 if msg_type in (0x02, 0x03):
                     self.handler.handle(msg_type, data)
+                elif msg_type == MSG_QUALITY:
+                    payload = json.loads(data.decode())
+                    q = int(payload.get('quality', self.capture.quality))
+                    s = float(payload.get('scale', self.capture.scale))
+                    self.capture.quality = max(10, min(95, q))
+                    self.capture.scale   = max(0.3, min(1.0, s))
+                    self.handler.inv_scale = 1.0 / self.capture.scale
+                    print(f"화질 변경: quality={self.capture.quality}, scale={self.capture.scale}")
                 elif msg_type == MSG_FILE_REQ:
                     payload = json.loads(data.decode())
                     file_server.send_file(payload['path'])
