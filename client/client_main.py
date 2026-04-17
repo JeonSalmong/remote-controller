@@ -222,20 +222,27 @@ class RemoteClient:
             if dialog and dialog.winfo_exists():
                 connect_btn.config(state=tk.NORMAL)
 
+        import traceback
         try:
+            print(f"[연결시도] {host_ip}:{port} 에 TCP 연결 중...")
+            set_status(f'TCP 연결 중... ({host_ip}:{port})', 'orange')
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(10)
             self.sock.connect((host_ip, port))
             self.sock.settimeout(None)
+            print(f"[연결시도] TCP 연결 성공")
 
             if self._connect_cancelled:
                 return
 
             # PIN 인증
+            print(f"[연결시도] PIN 인증 전송 중...")
+            set_status('PIN 인증 중...', 'orange')
             auth_data = json.dumps({'pin': pin}).encode()
             self.sock.sendall(pack_message(MSG_AUTH, auth_data))
             msg_type, data = recv_message(self.sock)
             resp = json.loads(data.decode())
+            print(f"[연결시도] 인증 응답: {resp}")
 
             if resp.get('status') != 'ok':
                 self.root.after(0, lambda: messagebox.showerror('인증 실패', 'PIN이 틀렸습니다!'))
@@ -244,6 +251,7 @@ class RemoteClient:
                 set_status('PIN 오류', 'red')
                 return
 
+            print(f"[연결시도] 인증 성공! 화면 수신 시작")
             self.file_client = FileClient(self.sock)
             self.running = True
             self.root.after(0, lambda: self.status_var.set(f'연결됨: {host_ip}:{port}'))
@@ -254,20 +262,30 @@ class RemoteClient:
             threading.Thread(target=self._recv_screen, daemon=True).start()
 
         except socket.timeout:
+            msg = f'연결 시간 초과 (10초)\n→ {host_ip}:{port} 에 도달하지 못했습니다.\n회사 방화벽이 ngrok를 차단했을 수 있습니다.'
+            print(f"[연결시도] 오류: {msg}")
             set_status('연결 시간 초과', 'red')
-            self.root.after(0, lambda: messagebox.showerror(
-                '연결 실패', f'연결 시간이 초과됐습니다.\nIP/포트를 확인하세요.'))
+            self.root.after(0, lambda: messagebox.showerror('연결 실패', msg))
             self.root.after(0, re_enable)
         except ConnectionRefusedError:
+            msg = f'{host_ip}:{port} 연결 거부\n→ 호스트(run_host.py)가 실행 중인지 확인하세요.'
+            print(f"[연결시도] 오류: {msg}")
             set_status('연결 거부됨', 'red')
-            self.root.after(0, lambda: messagebox.showerror(
-                '연결 실패', f'{host_ip}:{port} 에 연결할 수 없습니다.\n호스트가 실행 중인지 확인하세요.'))
+            self.root.after(0, lambda: messagebox.showerror('연결 실패', msg))
             self.root.after(0, re_enable)
         except OSError as e:
+            msg = f'{type(e).__name__}: {e}'
+            print(f"[연결시도] 오류: {msg}\n{traceback.format_exc()}")
             if not self._connect_cancelled:
                 set_status(f'오류: {e}', 'red')
-                self.root.after(0, lambda: messagebox.showerror('연결 오류', str(e)))
+                self.root.after(0, lambda: messagebox.showerror('연결 오류', msg))
                 self.root.after(0, re_enable)
+        except Exception as e:
+            msg = f'예상치 못한 오류: {type(e).__name__}: {e}'
+            print(f"[연결시도] {msg}\n{traceback.format_exc()}")
+            set_status('오류 발생', 'red')
+            self.root.after(0, lambda: messagebox.showerror('오류', msg))
+            self.root.after(0, re_enable)
 
     def _recv_screen(self):
         while self.running:
